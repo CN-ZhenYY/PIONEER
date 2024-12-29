@@ -127,7 +127,7 @@ void insertShadow(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier
     ts.end();
     insertNumber[pid] = counter;
     insertTime[pid] = (double)ts.duration() / 1000000 / 1000;
-    printf("%d Insert time %f Insert Number %d\n",pid,(double)ts.duration() / 1000000 / 1000,insertNumber[pid]);
+//    printf("%d Insert time %f Insert Number %d\n",pid,(double)ts.duration() / 1000000 / 1000,insertNumber[pid]);
 }
 void insertAllSingleShadow(DRAMManagerNUMA* dramManager,int pid,double * insertTime){
     nsTimer ts;
@@ -154,7 +154,7 @@ void searchShadow(DRAMManagerNUMA* dramManager,int pid,boost::barrier& barrier,d
     }
     ts.end();
     searchTime[pid] = (double)ts.duration() / 1000000 / 1000;
-    printf("%d Search time %f, Search Number %ld\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
+//    printf("%d Search time %f, Search Number %ld\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
 }
 void insertALLShadow(DRAMManagerNUMA* dramManager,int pid,double * insertTime){
 #ifndef Binding_threads
@@ -187,7 +187,7 @@ void searchAllShadow(DRAMManagerNUMA* dramManager,int pid,boost::barrier& barrie
     counter += (int)dramManager->searchAll(pid);
     ts.end();
     searchTime[pid] += (double)ts.duration() / 1000000 / 1000;
-    printf("%d Search time %f, Search Number %d\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
+//    printf("%d Search time %f, Search Number %d\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
 }
 void searchAllSingleShadow(DRAMManagerNUMA* dramManager,int pid,boost::barrier& barrier,double * searchTime){
 #ifndef Binding_threads
@@ -204,7 +204,7 @@ void searchAllSingleShadow(DRAMManagerNUMA* dramManager,int pid,boost::barrier& 
     counter += (int)dramManager->searchAllSingleThread(pid);
     ts.end();
     searchTime[pid] += (double)ts.duration() / 1000000 / 1000;
-    printf("%d Search time %f, Search Number %d\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
+//    printf("%d Search time %f, Search Number %d\n",pid,(double)ts.duration() / 1000000 / 1000, counter);
 }
 void YCSBShadow(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier, int *insertNumber,double * insertTime){
 #ifndef Binding_threads
@@ -495,7 +495,7 @@ void removeShadow(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier
     ts.end();
     removeNumber[pid] = counter;
     removeTime[pid] = (double)ts.duration() / 1000000 / 1000;
-    printf("%d Insert time %f Insert Number %d\n",pid,(double)ts.duration() / 1000000 / 1000,removeNumber[pid]);
+//    printf("%d Insert time %f Insert Number %d\n",pid,(double)ts.duration() / 1000000 / 1000,removeNumber[pid]);
 }
 void InsertSearchUpdateDelete(DRAMManagerNUMA* dramManagerNUMA){
     boost::thread_group insertThreads;
@@ -537,7 +537,7 @@ void InsertSearchUpdateDelete(DRAMManagerNUMA* dramManagerNUMA){
     updateTime.start();
     insertThreads.join_all();
     updateTime.end();
-    std::cout << "update time: " << (double)updateTime.duration() / 1000000 / 1000 << std::endl;
+//    std::cout << "update time: " << (double)updateTime.duration() / 1000000 / 1000 << std::endl;
 
     // remove
     for (int i = 0; i < THREAD_NUMBER; ++i) {
@@ -546,7 +546,7 @@ void InsertSearchUpdateDelete(DRAMManagerNUMA* dramManagerNUMA){
     deleteTime.start();
     insertThreads.join_all();
     deleteTime.end();
-    std::cout << "delete time: " << (double)deleteTime.duration() / 1000000 / 1000 << std::endl;
+//    std::cout << "delete time: " << (double)deleteTime.duration() / 1000000 / 1000 << std::endl;
     double total = testNum;
     double totalInsertTime = 0;
     double totalSearchTime = 0;
