@@ -1,0 +1,33 @@
+/home/dell/.cache/JetBrains/RemoteDev/dist/8cdb604a302b8_CLion-232.8660.139/bin/cmake/linux/x64/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/home/dell/.cache/JetBrains/RemoteDev/dist/8cdb604a302b8_CLion-232.8660.139/bin/ninja/linux/x64/ninja -G Ninja -S /home/dell/yzy/YCSB_baseline/PIONEER -B /home/dell/yzy/YCSB_baseline/PIONEER/cmake-build-debug
+-- The C compiler identification is GNU 11.4.0
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found OpenMP_C: -fopenmp (found version "4.5") 
+-- Found OpenMP_CXX: -fopenmp (found version "4.5") 
+-- Found OpenMP: TRUE (found version "4.5")  
+-- Found PkgConfig: /usr/bin/pkg-config (found version "0.29.1") 
+-- Checking for one of the modules 'libpmemobj;libpmemobj++'
+-- Found Boost: /usr/local/anaconda3/lib/cmake/Boost-1.73.0/BoostConfig.cmake (found version "1.73.0") found components: thread 
+-- Boost_FOUND: TRUE
+-- Configuring done (1.8s)
+CMake Warning at CMakeLists.txt:6 (add_executable):
+  Cannot generate a safe runtime search path for target PIONEER because files
+  in some directories may conflict with libraries in implicit directories:
+
+    runtime library [libgomp.so.1] in /usr/lib/gcc/x86_64-linux-gnu/11 may be hidden by files in:
+      /usr/local/anaconda3/lib
+
+  Some of these libraries may not be found correctly.
+
+
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dell/yzy/YCSB_baseline/PIONEER/cmake-build-debug

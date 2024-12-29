@@ -1,0 +1,16 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/dell/yzy/nvmkv/ExtendibleRadixTree-main/rng/rng.cpp
+rng.h
+/home/dell/yzy/nvmkv/ExtendibleRadixTree-main/rng/rng.h
+
+/home/dell/yzy/nvmkv/ExtendibleRadixTree-main/rng/rng.h
+stdint.h
+-
+

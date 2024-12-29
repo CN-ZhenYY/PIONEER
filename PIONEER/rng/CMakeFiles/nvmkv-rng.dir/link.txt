@@ -1,0 +1,2 @@
+/usr/bin/ar qc libnvmkv-rng.a CMakeFiles/nvmkv-rng.dir/rng.cpp.o
+/usr/bin/ranlib libnvmkv-rng.a
