@@ -19,6 +19,5 @@ All experiments are conducted on a two-socket server running Ubuntu 18.04 LTS, e
 ### Build and run steps
 Download this repository and change to the PIONEER folder.
 ```bash
-$ cd cmake-build-debug
-$ ./START.sh
-
+$ ./test.sh
+```
