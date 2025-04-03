@@ -6,7 +6,7 @@ Our paper, "Reconfiguring Scalable Hashing with Persistent CPU Caches", is submi
 
 ## Directory description
 
-- datasets: We use YCSB to generate 100% insert workload and the dataset in the github is a 10M key-value items demo to run the code.
+- datasets: We use YCSB to generate workload and the dataset in the github is a 10M key-value items demo to run the code.
 - PIONEER: The source code for PIONEER
 
 ## Linux build
