@@ -2,116 +2,82 @@
 // Created by yzy on 24-7-17.
 //
 
-#ifndef OPUS_UTIL_H
-#define OPUS_UTIL_H
+#ifndef PIONEER_UTIL_H
+#define PIONEER_UTIL_H
 #include <iostream>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <utility>
 #include <vector>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <immintrin.h>
+#ifdef __GNUC__
+#pragma GCC target("avx512bw", "avx512vl", "avx512dq", "avx512f")
+#endif
 
-static const uint64_t kFNVPrime64 = 1099511628211;
-#define DUPLICATE
-//#define RECOVER
-#define MAP_SYNC 0x080000
-#define MAP_SHARED_VALIDATE 0x03
+//#define Delta
+//#define WithoutStash
 #define ISNUMA
 #define eADR
-//#define Binding_threads
-#define KEY_LENGTH 64
+#define Binding_threads
+#define SIMD
+//#define RECOVER
+//#define MERGE
+#define SNAPSHOT
+
+
 
 #define SEGMENT_PREFIX 4
 #define SEGMENT_CAPACITY (1 << SEGMENT_PREFIX)
 #define BUCKET_CAPACITY 16
+#define DRAM_QUEUE_PREFIX 8
 #define DRAM_QUEUE_CAPACITY 256
-#define THREAD_MSB 5
-#define THREAD_NUMBER (1 << THREAD_MSB)
+
 #define INIT_THREAD_NUMBER 32
 #define MAX_LENGTH 8
-#define SNAPSHOT
-#define loadNum 00000000
-#define testNum 200000000
-#define FREE_BLOCK (1 << 22)
-#define STORE 15
-#define GENERATE_MSB 24
-#define SKEWNESS 0.01
 
-#define NVM_DIRECTORY_DEPTH 20
+#define FREE_BLOCK (1 << 21)
+#define STORE 30
 
-#define DYNAMIC_SIZE (1 << 28)
-#define PERSIST_DEPTH 0
+#define KEY_LENGTH 64
+#define NVM_DIRECTORY_DEPTH 19
+#define DYNAMIC_SIZE (1 << 30)
+
+#define Threshold 28
+#define SEGMENT_DATA_NUMBER (SEGMENT_CAPACITY * BUCKET_CAPACITY + STORE)
+#define BUCKET_DATA_NUMBER (SEGMENT_CAPACITY * BUCKET_CAPACITY)
 #define CACHELINESIZE 64
 #define SKIP_CHAR_NUMBER 30
-#define NN 312
-#define MM 156
-#define MATRIX_A 0xB5026F5AA96619E9ULL
-#define UM 0xFFFFFFFF80000000ULL /* Most significant 33 bits */
-#define LM 0x7FFFFFFFULL /* Least significant 31 bits */
-#define SEGMENT_DATA_NUMBER (SEGMENT_CAPACITY * BUCKET_CAPACITY + STORE)
-#define LOAD_DATA_PATH "/md0/ycsb200M/ycsb_load_workloada"
-#define RUN_DATA_PATH "/md0/ycsb200M/ycsb_run_workloada"
+#define MAP_SYNC 0x080000
+#define MAP_SHARED_VALIDATE 0x03
+static const uint64_t kFNVPrime64 = 1099511628211;
+#define DISPARITY (1 << (DRAM_QUEUE_PREFIX - SEGMENT_PREFIX))
+
+#define PERSIST_DEPTH 1
+#define BASE_THRESHOLD (1 << (8 - PERSIST_DEPTH))
+//#define BASE_THRESHOLD 128
 #define MASK ((0xFFFFFFFF << PERSIST_DEPTH) & 0xFFFFFFFF)
 #define ALLOC_SIZE ((size_t)4<<33)
-enum { OP_INSERT, OP_READ, OP_DELETE, OP_UPDATE };
+#define CONSUME_THREAD 1
+extern bool consumeFlag;
+
+//#define loadNum 000000000
+//#define testNum 200000000
+//#define THREAD_MSB 5
+//#define THREAD_NUMBER (1 << THREAD_MSB)
+//#define LOAD_DATA_PATH "/md0/ycsb200M/ycsb_load_workloada"
+//#define RUN_DATA_PATH "/md0/ycsb200M/ycsb_run_workloada"
+
+enum {OP_READ, OP_INSERT, OP_DELETE, OP_UPDATE };
 using namespace std;
 
-
-void readYCSB(uint64_t * keys,uint64_t * value_lens,uint8_t * ops){
-    std::string load_data = LOAD_DATA_PATH;
-    std::ifstream infile_load(load_data.c_str());
-    std::string insert("INSERT");
-    std::string op;
-    uint64_t key;
-    uint64_t value_len;
-    int count = 0;
-    while ((count < loadNum) && infile_load.good()) {
-        infile_load >> op >> key >> value_len;
-        if (!op.size()) continue;
-        if (op.size() != 0) {
-            std::cout << "READING LOAD FILE FAIL!\n";
-            std::cout << op << std::endl;
-            return;
-        }
-        keys[count] = key;
-        value_lens[count] = value_len;
-        count++;
-    }
-    infile_load.close();
-    std::ifstream infile_run(RUN_DATA_PATH);
-    std::string remove("REMOVE");
-    std::string read("READ");
-    std::string update("UPDATE");
-    while ((count < loadNum + testNum) && infile_run.good()) {
-        infile_run >> op >> key;
-        if (op.compare(insert) == 0) {
-            infile_run >> value_len;
-            ops[count] = OP_INSERT;
-            keys[count] = key;
-            value_lens[count] = value_len;
-        } else if (op.compare(update) == 0) {
-            infile_run >> value_len;
-            ops[count] = OP_UPDATE;
-            keys[count] = key;
-            value_lens[count] = value_len;
-        } else if (op.compare(read) == 0) {
-            ops[count] = OP_READ;
-            keys[count] = key;
-        } else if (op.compare(remove) == 0) {
-            ops[count] = OP_DELETE;
-            keys[count] = key;
-        } else {
-            continue;
-        }
-        count++;
-    }
-}
-void loadYCSB(uint64_t * keys,uint64_t * value_lens, uint64_t counter){
-    std::string load_data = LOAD_DATA_PATH;
+void loadYCSB(uint64_t * keys,uint64_t * value_lens, uint64_t counter, const std::string& load_path, uint64_t loadNum){
+    const std::string& load_data = load_path;
     std::ifstream infile_load(load_data.c_str());
     std::string insert("INSERT");
     std::string line;
@@ -137,11 +103,11 @@ void loadYCSB(uint64_t * keys,uint64_t * value_lens, uint64_t counter){
         count++;
     }
 }
-void readYCSB(uint64_t * keys,uint64_t * value_lens,uint8_t * ops, uint64_t counter){
+void readYCSB(uint64_t * keys,uint64_t * value_lens,uint8_t * ops, uint64_t counter, const std::string& run_path, uint64_t testNum){
     std::string op;
     uint64_t key;
     uint64_t value_len;
-    std::ifstream infile_run(RUN_DATA_PATH);
+    std::ifstream infile_run(run_path);
     int count = 0;
     int p = (int)counter;
 
@@ -278,10 +244,8 @@ public:
             close(fd);
             return nullptr;
         }
-
         close(fd);
         return mapped;
-
     }
 
 
@@ -290,10 +254,10 @@ public:
         return ( key >> (KEY_LENGTH - depth) ) & ((1 << depth) -1);
     }
     static uint64_t getMidMSBs(uint64_t key,unsigned char depth){
-        return ( key >> (KEY_LENGTH - depth - NVM_DIRECTORY_DEPTH - SEGMENT_PREFIX) ) & ((1 << depth) -1);
+        return ( key >> (KEY_LENGTH - depth - NVM_DIRECTORY_DEPTH - SEGMENT_PREFIX - 1) ) & ((1 << depth) -1);
     }
     static uint64_t getMetaMSBs(uint64_t key,unsigned char depth){
-            return ( key >> (KEY_LENGTH - depth - 9) ) & ((1 << depth) -1);
+        return (depth == 0) ? 0 : (key >> (KEY_LENGTH - depth));
     }
     static uint64_t getLSBs(uint64_t key){
         return key & ((1 << SEGMENT_PREFIX) - 1);
@@ -316,4 +280,4 @@ public:
     }
 };
 
-#endif //OPUS_UTIL_H
+#endif //PIONEER_UTIL_H

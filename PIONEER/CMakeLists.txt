@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.26)
 project(PIONEER)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_PREFIX_PATH /usr/lib/gcc/x86_64-linux-gnu/11)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2")
 find_package(OpenMP REQUIRED)
 add_executable(PIONEER
         Util.h
@@ -9,6 +10,8 @@ add_executable(PIONEER
         PIONEER.cpp
         PIONEER.h
 )
+find_package(gflags REQUIRED)
+target_link_libraries(PIONEER gflags)
 
 add_subdirectory(fastalloc)
 add_subdirectory(rng)

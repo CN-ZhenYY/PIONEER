@@ -1,8 +1,3 @@
-/**
- *    author:     UncP
- *    date:    2019-03-14
- *    license:    BSD-3
-**/
 
 #ifndef _rng_h_
 #define _rng_h_

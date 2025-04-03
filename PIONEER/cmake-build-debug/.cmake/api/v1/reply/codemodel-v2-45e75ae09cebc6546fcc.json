@@ -1,0 +1,113 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						2
+					],
+					"jsonFile" : "directory-.-Debug-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.26"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "fastalloc",
+					"jsonFile" : "directory-fastalloc-Debug-30eb1d83f8eb15118016.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.26"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "fastalloc",
+					"targetIndexes" : 
+					[
+						1
+					]
+				},
+				{
+					"build" : "rng",
+					"jsonFile" : "directory-rng-Debug-4d9f858642b168b513a2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.26"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "rng",
+					"targetIndexes" : 
+					[
+						2
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1,
+						2
+					],
+					"name" : "PIONEER",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "PIONEER::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-PIONEER-Debug-9cebb8401537705b7d16.json",
+					"name" : "PIONEER",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "nvmkv-fastalloc::@2439f904003ccf4d826d",
+					"jsonFile" : "target-nvmkv-fastalloc-Debug-b61f6993e4156332fcc9.json",
+					"name" : "nvmkv-fastalloc",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "nvmkv-rng::@1fceab467885426356db",
+					"jsonFile" : "target-nvmkv-rng-Debug-1c8de77158000f8ba148.json",
+					"name" : "nvmkv-rng",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/dell/yzy/YCSB_baseline/PIONEER/cmake-build-debug",
+		"source" : "/home/dell/yzy/YCSB_baseline/PIONEER"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 5
+	}
+}

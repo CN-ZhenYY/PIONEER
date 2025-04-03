@@ -1,0 +1,2 @@
+/usr/bin/ar qc libnvmkv-fastalloc.a "CMakeFiles/nvmkv-fastalloc.dir/fastalloc.cpp.o"
+/usr/bin/ranlib libnvmkv-fastalloc.a

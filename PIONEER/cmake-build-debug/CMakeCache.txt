@@ -259,6 +259,9 @@ boost_headers_DIR:PATH=/usr/local/anaconda3/lib/cmake/boost_headers-1.73.0
 //The directory containing a CMake configuration file for boost_thread.
 boost_thread_DIR:PATH=/usr/local/anaconda3/lib/cmake/boost_thread-1.73.0
 
+//The directory containing a CMake configuration file for gflags.
+gflags_DIR:PATH=/usr/local/anaconda3/lib/cmake/gflags
+
 //Path to a library.
 pkgcfg_lib_PMEMOBJ_pmemobj:FILEPATH=/usr/local/lib/libpmemobj.so
 
