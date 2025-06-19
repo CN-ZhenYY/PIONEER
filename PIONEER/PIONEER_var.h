@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <utility>
 #include "Util.h"
-#include <libpmem.h>
+thread_local volatile char value_[VALUE_SIZE];
 #define GET_NUMA(x) (x & 1)
 #define GET_LSBs(x) ((x >> 1) & ((1ULL << (SEGMENT_PREFIX - 1)) - 1))
 #define GET_MSBs(x) (x >> (64 - NVM_DIRECTORY_DEPTH))
@@ -271,7 +271,7 @@ public:
         return -1;
 #endif
     }
-    int search_variableItem_without_stash(uint64_t keyPoint,uint64_t &pos,uint16_t hash,uint64_t* dataSet)
+    int search_item_without_stash(uint64_t keyPoint,uint64_t &pos,uint16_t hash,char dataSet[][MAX_LENGTH + 1])
     {
 #ifdef SIMD
         __m128i _fingerprint = _mm_loadu_si128((const __m128i*)(fingerprint + pos));
@@ -280,7 +280,7 @@ public:
         int mask = _mm_movemask_epi8(cmp);
         while (mask) {
             int i = __builtin_ctz(mask);
-            if (entry[pos + i].key.key == keyPoint)
+            if (memcmp(dataSet[entry[pos + i].value.ValuePoint],dataSet[keyPoint],MAX_LENGTH + 1) == 0)
                 return (int)pos + i;
             mask &= mask - 1;
         }
@@ -291,36 +291,7 @@ public:
         {
             if (fingerprint[pos + i] == hash)
             {
-                if (entry[pos + i].key.key == keyPoint)
-                {
-                    return (int)pos + i;
-                }
-            }
-        }
-        return -1;
-#endif
-    }
-    int search_item_without_stash(uint64_t keyPoint,uint64_t &pos,uint16_t hash,uint64_t* dataSet)
-    {
-#ifdef SIMD
-        __m128i _fingerprint = _mm_loadu_si128((const __m128i*)(fingerprint + pos));
-        __m128i broadFingerprint = _mm_set1_epi8(hash);
-        __m128i cmp = _mm_cmpeq_epi8(_fingerprint, broadFingerprint);
-        int mask = _mm_movemask_epi8(cmp);
-        while (mask) {
-            int i = __builtin_ctz(mask);
-            if (entry[pos + i].key.key == keyPoint)
-                return (int)pos + i;
-            mask &= mask - 1;
-        }
-        return -1;
-#else
-        int i = 0;
-        for (; i < BUCKET_CAPACITY; ++i)
-        {
-            if (fingerprint[pos + i] == hash)
-            {
-                if (entry[pos + i].key.key == keyPoint)
+                if (memcmp(dataSet[entry[pos + i].value.ValuePoint],dataSet[keyPoint],MAX_LENGTH + 1) == 0)
                 {
                     return (int)pos + i;
                 }
@@ -452,7 +423,7 @@ public:
             }
         }
     }
-    void copy_mid_strategy(NVMBucket* newSegment, staticDirectoryEntry * tmpFirstDirectory) {
+    void copy_mid_strategy(NVMBucket* newSegment, staticDirectoryEntry * tmpFirstDirectory, char dataSet[][MAX_LENGTH + 1]) {
         if(tmpFirstDirectory->persistStrategy) {
             copy_mid(newSegment);
         }else{
@@ -466,7 +437,7 @@ public:
                         int k = j;
                         for(;k < indexNew; k++) {
                             if(newSegment->fingerprint[k] == fingerprint[i]) {
-                                if(newSegment->entry[k].key.key == entry[i].key.key) {
+                                if(memcmp(dataSet[newSegment->entry[k].value.ValuePoint],dataSet[entry[i].value.ValuePoint],MAX_LENGTH + 1) == 0) {
                                     counterTrans++;
                                     fingerprint[i] = 0;
 #ifndef eADR
@@ -494,7 +465,7 @@ public:
                         int k = j;
                         for(;k < indexOld; k++) {
                             if(fingerprint[k] == fingerprint[i]) {
-                                if(entry[k].key.key == entry[i].key.key) {
+                                if(memcmp(dataSet[entry[k].value.ValuePoint],dataSet[entry[i].value.ValuePoint],MAX_LENGTH + 1) == 0) {
                                     fingerprint[i] = 0;
                                     counterTrans++;
 #ifndef eADR
@@ -527,7 +498,7 @@ public:
                     uint64_t j = entry[i].key.LSBs * BUCKET_CAPACITY + STORE;
                     for(;j < (entry[i].key.LSBs + 1) * BUCKET_CAPACITY + STORE;j++){
                         if(newSegment->fingerprint[j] == fingerprint[i]) {
-                            if(newSegment->entry[j].key.key == entry[i].key.key) {
+                            if(memcmp(dataSet[newSegment->entry[j].value.ValuePoint],dataSet[entry[i].value.ValuePoint],MAX_LENGTH + 1) == 0) {
                                 fingerprint[i] = 0;
                                 counterTrans++;
                                 counterStash++;
@@ -569,7 +540,7 @@ public:
                     uint64_t j = entry[i].key.LSBs * BUCKET_CAPACITY + STORE;
                     for(;j < (entry[i].key.LSBs + 1) * BUCKET_CAPACITY + STORE;j++){
                         if(fingerprint[j] == fingerprint[i]) {
-                            if(entry[j].key.key == entry[i].key.key) {
+                            if(memcmp(dataSet[entry[j].value.ValuePoint],dataSet[entry[i].value.ValuePoint],MAX_LENGTH + 1) == 0) {
                                 fingerprint[i] = 0;
                                 counterTrans++;
                                 counterStash++;
@@ -996,7 +967,6 @@ public:
                 *strategy = true;
             }
         }
-
     };
     void DeDuplication() {
         int indexOld = STORE;
@@ -1034,7 +1004,6 @@ public:
             }
         }
         for(uint64_t i = 0;i < STORE;i++){
-
             uint64_t j = entry[i].key.LSBs * BUCKET_CAPACITY + STORE;
             for(;j < (entry[i].key.LSBs + 1) * BUCKET_CAPACITY + STORE;j++) {
                 if ((fingerprint[j] & 1) == 0) {
@@ -1494,23 +1463,6 @@ public:
         directory[0] = segmentManager->get();
 #endif
     }
-    void init(std::string filePath, uint64_t initDepth) {
-#ifndef RECOVER
-        savePointersToMetaData(filePath);
-#else
-        loadPointersFromMetaData("/pmem0/blockHash");
-#endif
-        segmentBlock = segmentManager->freeBucket;
-
-#ifndef RECOVER
-        globalDepth = initDepth;
-        directory = dynamicDirectory->dynamicDirectory + dynamicDirectory->allocPos(globalDepth);
-        for(int i = 0;i < 1 << globalDepth; i++) {
-            directory[i] = segmentManager->get();
-            segmentBlock[i].localDepth = initDepth;
-        }
-#endif
-    }
 
     bool insert(KeyPointer key, ValuePointer value, uint64_t * dataSet){
         while(true) {
@@ -1748,11 +1700,17 @@ public:
     NVMBlockManager * segmentManager;
     uint64_t * dynamicBlock;
     NVMBucket * segmentBlock;
-
+    char** valueStore;
     NVMManager(){
 
     }
     void init(std::string filePath) {
+        valueStore = new char*[INIT_THREAD_NUMBER];
+        for (int i = 0; i < INIT_THREAD_NUMBER; i++) {
+            std::string path = "/pmem" + std::to_string(i % 2) + "/blockHashLog_" + std::to_string(i);
+            uint64_t allocSize = (uint64_t )preNum / INIT_THREAD_NUMBER * VALUE_SIZE;
+            valueStore[i] = static_cast<char*>(Util::staticAllocatePMSpace(path, allocSize));
+        }
 #ifndef RECOVER
         savePointersToMetaData(filePath);
 #else
@@ -1767,13 +1725,13 @@ public:
         }
 #endif
     }
-    bool removeRange(Entry * entry, uint64_t * dataSet, uint8_t start, uint8_t end, uint64_t MSBs, bool * request){
+    bool removeRange(Entry * entry, char dataSet[][MAX_LENGTH + 1], uint8_t start, uint8_t end, uint64_t MSBs, bool * request){
         staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
         for(uint8_t i = start; i != end; i++) {
             removeRequest(entry[i].key,entry[i].value,dataSet,tmpFirstDirectory);
         }
     }
-    bool processRange(Entry * entry, uint64_t * dataSet, uint8_t start, uint8_t end, uint64_t MSBs, bool * request){
+    bool processRange(Entry * entry, char dataSet[][MAX_LENGTH + 1], uint8_t start, uint8_t end, uint64_t MSBs, bool * request){
         staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
         for(uint8_t i = start; i != end; i++) {
             if (request[i]) {
@@ -1786,7 +1744,23 @@ public:
             }
         }
     }
-    bool removeRequest(KeyPointer key, ValuePointer value, uint64_t * dataSet, staticDirectoryEntry * tmpFirstDirectory){
+    bool directorySnapshotFirstProcess(uint64_t MSBs,uint8_t * fingerprint,Entry * stash, Entry * bucket){
+        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
+        uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
+        auto * segment = segmentBlock + second_level_directory[0];
+        memcpy(segment->fingerprint,fingerprint,sizeof(uint8_t) * SEGMENT_DATA_NUMBER);
+        memcpy(segment->entry,stash,sizeof(Entry) * STORE);
+        memcpy(segment->entry + STORE, bucket, sizeof(Entry) * BUCKET_DATA_NUMBER);
+    }
+    bool directorySnapshotProcess(uint64_t MSBs,uint8_t * fingerprint,Entry * stash, Entry * bucket){
+        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
+        uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
+        auto * segment = segmentBlock + second_level_directory[0];
+        memcpy(segment->fingerprint,fingerprint,sizeof(uint8_t) * SEGMENT_DATA_NUMBER);
+        memcpy(segment->entry,stash,sizeof(Entry) * STORE);
+        memcpy(segment->entry + STORE, bucket, sizeof(Entry) * BUCKET_DATA_NUMBER);
+    }
+    bool removeRequest(KeyPointer key, ValuePointer value, char dataSet[][MAX_LENGTH + 1], staticDirectoryEntry * tmpFirstDirectory){
         uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
         uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
         auto * segment = segmentBlock + second_level_directory[Util::getMidMSBs(key.midMSBs,tmpFirstDirectory->globalDepth)];
@@ -1802,7 +1776,7 @@ public:
         }
         return false;
     }
-    bool searchRequest(KeyPointer key, ValuePointer value, uint64_t * dataSet, staticDirectoryEntry * tmpFirstDirectory){
+    bool searchRequest(KeyPointer key, ValuePointer value, char dataSet[][MAX_LENGTH + 1], staticDirectoryEntry * tmpFirstDirectory){
         uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
         uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
         auto * segment = segmentBlock + second_level_directory[Util::getMidMSBs(key.midMSBs,tmpFirstDirectory->globalDepth)];
@@ -1814,8 +1788,11 @@ public:
 
         while (mask) {
             int i = __builtin_ctz(mask);
-            if (segment->entry[position + i].key.key == key.key)
+            if (memcmp(dataSet[segment->entry[position + i].value.ValuePoint], dataSet[value.ValuePoint],MAX_LENGTH + 1) == 0) {
+                memcpy((void *) value_, valueStore[value.ValuePoint % INIT_THREAD_NUMBER] + (value.ValuePoint / INIT_THREAD_NUMBER * VALUE_SIZE), VALUE_SIZE);
                 return true;
+            }
+
             mask &= mask - 1;
         }
 #else
@@ -1823,7 +1800,7 @@ public:
         {
             if (segment->fingerprint[position + i] == value.fingerPrint)
             {
-                if (segment->entry[position + i].key.key == key.key)
+                if (memcmp(dataSet[segment->entry[position + i].value.ValuePoint], dataSet[value.ValuePoint],MAX_LENGTH + 1) == 0)
                 {
                     return true;
                 }
@@ -1834,21 +1811,22 @@ public:
         {
             if (segment->fingerprint[i] == value.fingerPrint)
             {
-                if (segment->entry[i].key.key == key.key)
+                if (memcmp(dataSet[segment->entry[i].value.ValuePoint], dataSet[value.ValuePoint],MAX_LENGTH + 1) == 0)
                 {
+                    memcpy((void *) value_, valueStore[value.ValuePoint%INIT_THREAD_NUMBER] + (value.ValuePoint/INIT_THREAD_NUMBER * VALUE_SIZE), VALUE_SIZE);
                     return true;
                 }
             }
         }
         return false;
     }
-    bool insertRequest(KeyPointer key, ValuePointer value, uint64_t * dataSet, staticDirectoryEntry * tmpFirstDirectory){
+    bool insertRequest(KeyPointer key, ValuePointer value, char dataSet[][MAX_LENGTH + 1], staticDirectoryEntry * tmpFirstDirectory){
         while(true) {
             uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
             uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
             auto * segment = segmentBlock + second_level_directory[Util::getMidMSBs(key.midMSBs,tmpFirstDirectory->globalDepth)];
             if(tmpFirstDirectory->persistStrategy) {
-                int old_slot = segment->search_item_without_stash(key.key, position, value.fingerPrint, dataSet);
+                int old_slot = segment->search_item_without_stash(value.ValuePoint, position, value.fingerPrint, dataSet);
                 if (old_slot >= 0) {
                     return segment->modify(old_slot, key);
                 }
@@ -1876,7 +1854,8 @@ public:
                         }
                     }
                 }
-            }else {
+            }
+            else {
                 for(int i = 0; i < BUCKET_CAPACITY; i++){
                     if((segment->fingerprint[position + i] & 1) == 0){
                         segment->fingerprint[position + i] = value.fingerPrint;
@@ -1902,9 +1881,11 @@ public:
                     }
                 }
             }
-            bucketSplit(segment, Util::getMidMSBs(key.midMSBs, tmpFirstDirectory->globalDepth), tmpFirstDirectory);
+            bucketSplit(segment, Util::getMidMSBs(key.midMSBs, tmpFirstDirectory->globalDepth), tmpFirstDirectory, dataSet);
         }
     }
+
+
     bool remove(KeyPointer key,ValuePointer value,uint64_t *dataSet){
         staticDirectoryEntry * tmpFirstDirectory = staticDirectory + key.MSBs;
         uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
@@ -1917,19 +1898,23 @@ public:
             return false;
         }
     }
-    void bucketSplit(NVMBucket* preSegment,uint64_t MSBs,staticDirectoryEntry * tmpFirstDirectory){
+
+    void doubleDirectory(staticDirectoryEntry * tmpFirstDirectory){
+        int counter = 0;
+        tmpFirstDirectory->globalDepth++ ;
+        auto newSegmentPointer = dynamicDirectory->allocPos(tmpFirstDirectory->globalDepth);
+        for(int i = 0;i < 1 << tmpFirstDirectory->globalDepth;i += 2,counter++){
+            dynamicBlock[newSegmentPointer + i] = dynamicBlock[tmpFirstDirectory->offset + counter];
+            dynamicBlock[newSegmentPointer + i + 1] = dynamicBlock[tmpFirstDirectory->offset + counter];
+        }
+        tmpFirstDirectory->offset = newSegmentPointer;
+    }
+    void bucketSplit(NVMBucket* preSegment,uint64_t MSBs,staticDirectoryEntry * tmpFirstDirectory, char dataSet[][MAX_LENGTH + 1]){
         uint64_t offset = tmpFirstDirectory->globalDepth - preSegment->localDepth;
         MSBs = (MSBs >> offset) << offset;
         bool extendSet = false;
         if(preSegment->localDepth == tmpFirstDirectory->globalDepth){
             // double directory
-
-#ifdef Delta
-            if(tmpFirstDirectory->globalDepth >= 30 - NVM_DIRECTORY_DEPTH) {
-                preSegment->DeDuplication();
-                return;
-            }
-#endif
             MSBs <<= 1;
             extendSet = true;
         }
@@ -1939,16 +1924,9 @@ public:
         preSegment->localDepth++;
         (segmentBlock + newSegment)->localDepth = preSegment->localDepth;
         // strategy (delta, inplace, data-aware)
-#ifdef Delta
-        preSegment->merge_and_copy_mid(segmentBlock + newSegment,preSegment->localDepth);
-#else
-//#ifdef WithoutStash
 //        preSegment->copy_mid(segmentBlock + newSegment);
-//#else
-        preSegment->copy_mid_strategy(segmentBlock + newSegment,tmpFirstDirectory);
-//#endif
-#endif
-
+//        preSegment->merge_and_copy_mid(segmentBlock + newSegment,preSegment->localDepth);
+        preSegment->copy_mid_strategy(segmentBlock + newSegment,tmpFirstDirectory, dataSet);
 #ifdef eADR
         clwb((char*)preSegment,sizeof(NVMBucket));
         clwb((char*)(segmentBlock + newSegment),sizeof(NVMBucket));
@@ -1973,16 +1951,6 @@ public:
             }
         }
     }
-    void doubleDirectory(staticDirectoryEntry * tmpFirstDirectory){
-        int counter = 0;
-        tmpFirstDirectory->globalDepth++ ;
-        auto newSegmentPointer = dynamicDirectory->allocPos(tmpFirstDirectory->globalDepth);
-        for(int i = 0;i < 1 << tmpFirstDirectory->globalDepth;i += 2,counter++){
-            dynamicBlock[newSegmentPointer + i] = dynamicBlock[tmpFirstDirectory->offset + counter];
-            dynamicBlock[newSegmentPointer + i + 1] = dynamicBlock[tmpFirstDirectory->offset + counter];
-        }
-        tmpFirstDirectory->offset = newSegmentPointer;
-    }
     bool search(KeyPointer key,ValuePointer value,uint64_t *dataSet){
         staticDirectoryEntry * tmpFirstDirectory = staticDirectory + key.MSBs;
         uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
@@ -1994,62 +1962,7 @@ public:
         }
         return false;
     }
-    bool insertRange(Entry * entry, uint64_t * dataSet, uint8_t start, uint8_t end, uint64_t MSBs){
-        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
-        for(uint8_t i = start; i != end; i++){
-            while(true) {
-                uint64_t position = entry[i].key.LSBs * BUCKET_CAPACITY + STORE;
-                uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
-                auto * segment = segmentBlock + second_level_directory[Util::getMidMSBs(entry[i].key.midMSBs,tmpFirstDirectory->globalDepth)];
-                int old_slot = segment->search_item_with_fingerprint(entry[i].key.key, position, entry[i].value.fingerPrint, dataSet);
-                if (old_slot >= 0) {
-                    segment->modify(old_slot, entry[i].key);
-                    break;
-                }
-                position = segment->find_location(position);
-                if(position != SEGMENT_DATA_NUMBER){
-                    segment->fingerprint[position] = entry[i].value.fingerPrint;
-                    segment->entry[position].key = entry[i].key;
-                    segment->entry[position].value = entry[i].value;
-                    break;
-                }
-#ifndef eADR
-                clwb((char*)segment->fingerprint + position,sizeof(uint16_t));
-                clwb((char*)segment->entry + position,sizeof(Entry));
-#else
-                //mfence();
-#endif
-                bucketSplit(segment, Util::getMidMSBs(entry[i].key.midMSBs, tmpFirstDirectory->globalDepth), tmpFirstDirectory);
-            }
-        }
-    }
 
-    bool insert(KeyPointer key, ValuePointer value, uint64_t * dataSet){
-        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + key.MSBs;
-        while(true) {
-            uint64_t position = key.LSBs * BUCKET_CAPACITY + STORE;
-            uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
-            auto * segment = segmentBlock + second_level_directory[Util::getMidMSBs(key.midMSBs,tmpFirstDirectory->globalDepth)];
-            int old_slot = segment->search_item_with_fingerprint(key.key, position, value.fingerPrint, dataSet);
-            if (old_slot >= 0) {
-                return segment->modify(old_slot, key);
-            }
-            position = segment->find_location(position);
-            if(position != SEGMENT_DATA_NUMBER){
-                segment->fingerprint[position] = value.fingerPrint;
-                segment->entry[position].key = key;
-                segment->entry[position].value = value;
-                return true;
-            }
-#ifndef eADR
-            clwb((char*)segment->fingerprint + position,sizeof(uint16_t));
-            clwb((char*)segment->entry + position,sizeof(Entry));
-#else
-            mfence();
-#endif
-            bucketSplit(segment, Util::getMidMSBs(key.midMSBs, tmpFirstDirectory->globalDepth), tmpFirstDirectory);
-        }
-    }
     void savePointersToMetaData(const string& filePath) {
         staticDirectory = static_cast<staticDirectoryEntry *>(Util::staticAllocatePMSpace(filePath + "NVMDirectory",sizeof(staticDirectoryEntry) * (1 << NVM_DIRECTORY_DEPTH)));
         segmentManager = static_cast<NVMBlockManager *>(Util::staticAllocatePMSpace(filePath + "blockManager",sizeof(NVMBlockManager)));
@@ -2067,29 +1980,13 @@ public:
         recoveryTime.end();
         std::cout << "recovery metaData done, time:" << recoveryTime.duration() << std::endl;
     }
-    bool directorySnapshotFirstProcess(uint64_t MSBs,uint8_t * fingerprint,Entry * stash, Entry * bucket){
-        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
-        uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
-        auto * segment = segmentBlock + second_level_directory[0];
-        memcpy(segment->fingerprint,fingerprint,sizeof(uint8_t) * SEGMENT_DATA_NUMBER);
-        memcpy(segment->entry,stash,sizeof(Entry) * STORE);
-        memcpy(segment->entry + STORE, bucket, sizeof(Entry) * BUCKET_DATA_NUMBER);
-    }
-    bool directorySnapshotProcess(uint64_t MSBs,uint8_t * fingerprint,Entry * stash, Entry * bucket){
-        staticDirectoryEntry * tmpFirstDirectory = staticDirectory + MSBs;
-        uint64_t * second_level_directory = dynamicBlock + tmpFirstDirectory->offset;
-        auto * segment = segmentBlock + second_level_directory[0];
-        Util::ntw_memcpy(segment->fingerprint,fingerprint,sizeof(uint8_t) * SEGMENT_DATA_NUMBER);
-        Util::ntw_memcpy(segment->entry,stash,sizeof(Entry) * STORE);
-        Util::ntw_memcpy(segment->entry + STORE, bucket, sizeof(Entry) * BUCKET_DATA_NUMBER);
-    }
 };
 
 #include <list>
 bool consumeFlag = true;
 class PersistentProcessor{
 public:
-    uint64_t *dataSet;
+    char (*dataSet)[MAX_LENGTH + 1];
     DRAMQueue * dramQueue;
     NVMManager * nvmManager;
     bool * waitForTrans;
@@ -2098,7 +1995,7 @@ public:
     uint8_t persistQueueStart = 0;
     uint32_t persistNode[256] = {0};
     std::list<long long> timer;
-    PersistentProcessor(uint64_t *dataSet, DRAMQueue *dramQueue, NVMManager *nvmManager, bool * waitForTrans) : dataSet(dataSet),
+    PersistentProcessor(char dataSet[][MAX_LENGTH + 1], DRAMQueue *dramQueue, NVMManager *nvmManager, bool * waitForTrans) : dataSet(dataSet),
                                                                                                                 dramQueue(dramQueue),
                                                                                                                 nvmManager(nvmManager),
                                                                                                                 waitForTrans(waitForTrans)
@@ -2145,7 +2042,6 @@ public:
 class DRAMManager{
 public:
     string filePath;
-    uint64_t *dataSet;
     bool waitForTrans[1 << NVM_DIRECTORY_DEPTH];
     bool SnapShot[1 << NVM_DIRECTORY_DEPTH];
 //    bool * status;
@@ -2156,7 +2052,7 @@ public:
     uint8_t threshold[1 << NVM_DIRECTORY_DEPTH];
     PersistentProcessor * persistentProcessor;
     DRAM_Hash_metadata tmpMetaData;
-    char (*variableDataSet)[MAX_LENGTH + 1];
+    char (*dataSet)[MAX_LENGTH + 1];
     explicit DRAMManager(std::string _filePath, int number) {
         filePath = std::move(_filePath);
         dramQueue = new DRAMQueue();
@@ -2166,15 +2062,15 @@ public:
         std::fill(threshold, threshold + (1 << NVM_DIRECTORY_DEPTH), BASE_THRESHOLD);
     }
 
-    void init(uint64_t * dataSetName,KeyPointer * keyPointer,ValuePointer * valuePointer,bool * statusName){
+    void init(char dataSetName[][MAX_LENGTH + 1],KeyPointer * keyPointer,ValuePointer * valuePointer,bool * statusName){
 //        status = statusName;
         dataSet = dataSetName;
-        persistentProcessor = new PersistentProcessor(dataSet,dramQueue,nvmManager,waitForTrans);
+        persistentProcessor = new PersistentProcessor(dataSetName,dramQueue,nvmManager,waitForTrans);
         keyPointerDataSet = keyPointer;
         valuePointerDataSet = valuePointer;
     }
     void initVariableKey(char dataSetName[][MAX_LENGTH + 1],KeyPointer * keyPointer,ValuePointer * valuePointer){
-        variableDataSet = dataSetName;
+        dataSet = dataSetName;
         keyPointerDataSet = keyPointer;
         valuePointerDataSet = valuePointer;
     }
@@ -2300,7 +2196,7 @@ public:
 
                 while (mask) {
                     int i = __builtin_ctz(mask);
-                    if (dramQueue->entry[position + i].key.key == key.key)
+                    if (dataSet[dramQueue->entry[position + i].value.ValuePoint] == dataSet[value.ValuePoint])
                         return true;
                     mask &= mask - 1;
                 }
@@ -2350,8 +2246,7 @@ public:
             __sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], true, false);
         }
 #else
-        if(number == uint8_t (dramQueue->persistStart[MSBs] + (1 << 7) + (1 << 6))){
-            Util::prefetch(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY));
+        if(number == uint8_t (dramQueue->persistStart[MSBs] + Threshold)){
             if(__sync_bool_compare_and_swap(&waitForTrans[MSBs], false, true)){
                 nvmManager->processRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], number, MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
                 dramQueue->persistStart[MSBs] = number;
@@ -2381,217 +2276,6 @@ public:
         }
     }
     bool removeRemainRequestN(int pid, uint64_t thread_number){
-        for(uint64_t MSBs = (1 << NVM_DIRECTORY_DEPTH) / thread_number * pid;MSBs < (1 << NVM_DIRECTORY_DEPTH) / thread_number * (pid + 1);MSBs++){
-            nvmManager->removeRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], dramQueue->insertEnd[MSBs], MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-            dramQueue->persistStart[MSBs] = dramQueue->insertEnd[MSBs];
-        }
-    }
-
-    // Variable
-    bool removeVariable(KeyPointer key, ValuePointer value, bool requestType){
-        uint64_t MSBs = key.MSBs;
-        uint8_t number = __sync_fetch_and_add(&dramQueue->insertEnd[MSBs],1);
-        dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].key = key;
-        dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].value = value;
-        dramQueue->type[(MSBs * DRAM_QUEUE_CAPACITY) + number] = requestType;
-#ifdef MERGE
-        if(number == uint8_t (dramQueue->persistStart[MSBs] + threshold[MSBs])){
-            if(__sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], false, true)){
-            for(uint64_t persistMSBs = (MSBs & MASK); persistMSBs < (MSBs & MASK) + (1 << PERSIST_DEPTH); persistMSBs++){
-                    number = __sync_fetch_and_add(&dramQueue->insertEnd[persistMSBs],1);
-                    nvmManager->processRange(dramQueue->entry + (persistMSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[persistMSBs], number, persistMSBs, dramQueue->type + (persistMSBs * DRAM_QUEUE_CAPACITY));
-                    dramQueue->persistStart[persistMSBs] = number;
-                }
-            }
-            __sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], true, false);
-        }
-#else
-        if(number == uint8_t (dramQueue->persistStart[MSBs] + (1 << 7) + (1 << 6))){
-            if(__sync_bool_compare_and_swap(&waitForTrans[MSBs], false, true)){
-                nvmManager->removeRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], number, MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-                dramQueue->persistStart[MSBs] = number;
-                __sync_bool_compare_and_swap(&waitForTrans[MSBs], true, false);
-            }
-        }
-#endif
-        return true;
-    }
-
-    bool processVariableRequest(KeyPointer key, ValuePointer value, bool requestType){
-#ifdef SNAPSHOT
-        uint64_t MSBs = key.MSBs;
-        if(SnapShot[MSBs]) {
-            uint8_t number = __sync_fetch_and_add(&dramQueue->insertEnd[MSBs],1);
-            dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].key = key;
-            dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].value = value;
-            dramQueue->type[(MSBs * DRAM_QUEUE_CAPACITY) + number] = requestType;
-#ifdef MERGE
-            if(number == uint8_t (dramQueue->persistStart[MSBs] + threshold[MSBs])){
-            if(__sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], false, true)){
-            for(uint64_t persistMSBs = (MSBs & MASK); persistMSBs < (MSBs & MASK) + (1 << PERSIST_DEPTH); persistMSBs++){
-                    number = __sync_fetch_and_add(&dramQueue->insertEnd[persistMSBs],1);
-                    nvmManager->processRange(dramQueue->entry + (persistMSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[persistMSBs], number, persistMSBs, dramQueue->type + (persistMSBs * DRAM_QUEUE_CAPACITY));
-                    dramQueue->persistStart[persistMSBs] = number;
-                }
-            }
-            __sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], true, false);
-        }
-#else
-            if(number == uint8_t (dramQueue->persistStart[MSBs] + (1 << 7) + (1 << 6))){
-                if(__sync_bool_compare_and_swap(&waitForTrans[MSBs], false, true)){
-                    nvmManager->processRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], number, MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-                    dramQueue->persistStart[MSBs] = number;
-                    __sync_bool_compare_and_swap(&waitForTrans[MSBs], true, false);
-                }
-            }
-#endif
-            return true;
-        }
-        else {
-            if(requestType) {
-                // insert
-                uint64_t position = MSBs * DRAM_QUEUE_CAPACITY + key.LSBs * DISPARITY;
-                uint64_t meta_position = MSBs * STORE + position + STORE;
-                // bucket
-                for (int i = 0; i < DISPARITY; ++i)
-                {
-                    if(!(tmpMetaData.fingerprint[meta_position + i] & 1)) {
-                        tmpMetaData.fingerprint[meta_position + i] = value.fingerPrint;
-                        dramQueue->entry[position + i].key = key;
-                        dramQueue->entry[position + i].value = value;
-                        return true;
-                    }
-                    if (tmpMetaData.fingerprint[meta_position + i] == value.fingerPrint)
-                    {
-                        if (dramQueue->entry[position + i].key.key == key.key)
-                        {
-                            dramQueue->entry[position + i].value = value;
-                            return true;
-                        }
-                    }
-                }
-                position = MSBs * STORE;
-                meta_position = MSBs * SEGMENT_DATA_NUMBER;
-                // stash
-                for (int i = 0; i < STORE; ++i) {
-                    if(!(tmpMetaData.fingerprint[meta_position + i] & 1)) {
-                        tmpMetaData.fingerprint[meta_position + i] = value.fingerPrint;
-                        tmpMetaData.entry[position + i].key = key;
-                        tmpMetaData.entry[position + i].value = value;
-                        return true;
-                    }
-                    if (tmpMetaData.fingerprint[meta_position + i] == value.fingerPrint)
-                    {
-                        if (tmpMetaData.entry[position + i].key.key == key.key)
-                        {
-                            dramQueue->entry[position + i].value = value;
-                            return true;
-                        }
-                    }
-                }
-                // persistent data
-                if(__sync_bool_compare_and_swap(&SnapShot[MSBs], false, true)) {
-                    if(__sync_bool_compare_and_swap(&waitForTrans[MSBs], false, true)){
-                        nvmManager->directorySnapshotProcess(MSBs, tmpMetaData.fingerprint + (MSBs * SEGMENT_DATA_NUMBER), tmpMetaData.entry + (MSBs * STORE), dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY));
-                        __sync_bool_compare_and_swap(&waitForTrans[MSBs], true, false);
-                    }
-                }else {
-                    processRequest(key, value, requestType);
-                }
-            }else {
-                // search
-                uint64_t position = MSBs * DRAM_QUEUE_CAPACITY + key.LSBs * DISPARITY;
-                uint64_t meta_position = MSBs * STORE + position + STORE;
-#ifdef SIMD
-                __m128i fingerprint = _mm_loadu_si128((const __m128i*)(tmpMetaData.fingerprint + meta_position));
-                __m128i broadFingerprint = _mm_set1_epi8(value.fingerPrint);
-                __m128i cmp = _mm_cmpeq_epi8(fingerprint, broadFingerprint);
-                int mask = _mm_movemask_epi8(cmp);
-
-                while (mask) {
-                    int i = __builtin_ctz(mask);
-                    if (dramQueue->entry[position + i].key.key == key.key)
-                        return true;
-                    mask &= mask - 1;
-                }
-#else
-                // bucket
-                for (int i = 0; i < DISPARITY; ++i)
-                {
-                    if (tmpMetaData.fingerprint[meta_position + i] == value.fingerPrint)
-                    {
-                        if (dramQueue->entry[position + i].key.key == key.key)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                position = MSBs * STORE;
-                meta_position = MSBs * SEGMENT_DATA_NUMBER;
-                // stash
-                for (int i = 0; i < STORE; ++i) {
-                    if (tmpMetaData.fingerprint[meta_position + i] == value.fingerPrint)
-                    {
-                        if (tmpMetaData.entry[position + i].key.key == key.key)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-#endif
-            }
-        }
-#else
-        uint64_t MSBs = key.MSBs;
-        uint8_t number = __sync_fetch_and_add(&dramQueue->insertEnd[MSBs],1);
-        dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].key = key;
-        dramQueue->entry[(MSBs * DRAM_QUEUE_CAPACITY) + number].value = value;
-        dramQueue->type[(MSBs * DRAM_QUEUE_CAPACITY) + number] = requestType;
-#ifdef MERGE
-        if(number == uint8_t (dramQueue->persistStart[MSBs] + threshold[MSBs])){
-            if(__sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], false, true)){
-            for(uint64_t persistMSBs = (MSBs & MASK); persistMSBs < (MSBs & MASK) + (1 << PERSIST_DEPTH); persistMSBs++){
-                    number = __sync_fetch_and_add(&dramQueue->insertEnd[persistMSBs],1);
-                    nvmManager->processRange(dramQueue->entry + (persistMSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[persistMSBs], number, persistMSBs, dramQueue->type + (persistMSBs * DRAM_QUEUE_CAPACITY));
-                    dramQueue->persistStart[persistMSBs] = number;
-                }
-            }
-            __sync_bool_compare_and_swap(&waitForTrans[(MSBs & MASK)], true, false);
-        }
-#else
-        if(number == uint8_t (dramQueue->persistStart[MSBs] + (1 << 7) + (1 << 6))){
-            if(__sync_bool_compare_and_swap(&waitForTrans[MSBs], false, true)){
-                nvmManager->processRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], number, MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-                dramQueue->persistStart[MSBs] = number;
-                __sync_bool_compare_and_swap(&waitForTrans[MSBs], true, false);
-            }
-        }
-#endif
-        return true;
-#endif
-    }
-
-
-    bool processVariableRemainRequest(int pid, uint64_t thread_number){
-        for(uint64_t MSBs = (1 << NVM_DIRECTORY_DEPTH) / thread_number * 2 * pid;MSBs < (1 << NVM_DIRECTORY_DEPTH) / thread_number * 2 * (pid + 1);MSBs++){
-            nvmManager->processRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], dramQueue->insertEnd[MSBs], MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-            dramQueue->persistStart[MSBs] = dramQueue->insertEnd[MSBs];
-        }
-    }
-    bool processVariableRemainRequestN(int pid, uint64_t thread_number){
-        for(uint64_t MSBs = (1 << NVM_DIRECTORY_DEPTH) / thread_number * pid;MSBs < (1 << NVM_DIRECTORY_DEPTH) / thread_number * (pid + 1);MSBs++){
-            nvmManager->processRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], dramQueue->insertEnd[MSBs], MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-            dramQueue->persistStart[MSBs] = dramQueue->insertEnd[MSBs];
-        }
-    }
-    bool removeVariableRemainRequest(int pid, uint64_t thread_number){
-        for(uint64_t MSBs = (1 << NVM_DIRECTORY_DEPTH) / thread_number * 2 * pid;MSBs < (1 << NVM_DIRECTORY_DEPTH) / thread_number * 2 * (pid + 1);MSBs++){
-            nvmManager->removeRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], dramQueue->insertEnd[MSBs], MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
-            dramQueue->persistStart[MSBs] = dramQueue->insertEnd[MSBs];
-        }
-    }
-    bool removeVariableRemainRequestN(int pid, uint64_t thread_number){
         for(uint64_t MSBs = (1 << NVM_DIRECTORY_DEPTH) / thread_number * pid;MSBs < (1 << NVM_DIRECTORY_DEPTH) / thread_number * (pid + 1);MSBs++){
             nvmManager->removeRange(dramQueue->entry + (MSBs * DRAM_QUEUE_CAPACITY), dataSet, dramQueue->persistStart[MSBs], dramQueue->insertEnd[MSBs], MSBs, dramQueue->type + (MSBs * DRAM_QUEUE_CAPACITY));
             dramQueue->persistStart[MSBs] = dramQueue->insertEnd[MSBs];
@@ -2641,13 +2325,13 @@ public:
         managerNUMAOne = new DRAMManager("/pmem1/blockHash",1);
     }
 
-    void changeDataSet(uint64_t * dataSet){
+    void changeDataSet(char dataSet[][MAX_LENGTH + 1]){
         managerNUMAZero->dataSet = dataSet;
         managerNUMAOne->dataSet = dataSet;
     }
-    void init(uint64_t *dataSetName,KeyPointer * keyPointer,ValuePointer * valuePointer, bool * status){
-        managerNUMAZero->init(dataSetName,keyPointer,valuePointer, status);
-        managerNUMAOne->init(dataSetName,keyPointer,valuePointer, status);
+    void init(char dataSet[][MAX_LENGTH + 1],KeyPointer * keyPointer,ValuePointer * valuePointer, bool * status){
+        managerNUMAZero->init(dataSet,keyPointer,valuePointer, status);
+        managerNUMAOne->init(dataSet,keyPointer,valuePointer, status);
     }
     void initVariableKey(char dataSetName[][MAX_LENGTH + 1],KeyPointer * keyPointer,ValuePointer * valuePointer){
         managerNUMAZero->initVariableKey(dataSetName,keyPointer,valuePointer);
@@ -2659,13 +2343,6 @@ public:
             return managerNUMAOne->processRequest(key, value, type);
         }else{
             return managerNUMAZero->processRequest(key, value, type);
-        }
-    }
-    bool processVariableRequest(KeyPointer key, ValuePointer value, bool type){
-        if(key.NUMA){
-            return managerNUMAOne->processVariableRequest(key, value, type);
-        }else{
-            return managerNUMAZero->processVariableRequest(key, value, type);
         }
     }
     bool processRemainRequest(int pid, uint64_t thread_number){

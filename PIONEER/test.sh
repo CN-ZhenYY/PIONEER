@@ -4,7 +4,7 @@ load_data_path='/d/dataset/YCSB/ycsb200M/ycsb_load_workloada'
 run_data_path='/d/dataset/YCSB/ycsb200M/ycsb_run_workloada'
 pm_path='/d/dataset/YCSB/ycsb200M/ycsb_run_workloada'
 thread_number=32
-operations='delete'
+operations='insert'
 
 mkdir build
 cd build

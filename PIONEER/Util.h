@@ -24,31 +24,32 @@
 //#define WithoutStash
 #define ISNUMA
 #define eADR
-#define Binding_threads
+//#define Binding_threads
 #define SIMD
 //#define RECOVER
 //#define MERGE
-#define SNAPSHOT
-
-
+//#define SNAPSHOT
+//#define VARIABLE
+//#define TESTCACHE
 
 #define SEGMENT_PREFIX 4
+
 #define SEGMENT_CAPACITY (1 << SEGMENT_PREFIX)
 #define BUCKET_CAPACITY 16
 #define DRAM_QUEUE_PREFIX 8
 #define DRAM_QUEUE_CAPACITY 256
 
 #define INIT_THREAD_NUMBER 32
-#define MAX_LENGTH 8
+#define MAX_LENGTH 16
 
-#define FREE_BLOCK (1 << 21)
+#define FREE_BLOCK (1 << 24)
 #define STORE 30
 
 #define KEY_LENGTH 64
 #define NVM_DIRECTORY_DEPTH 19
 #define DYNAMIC_SIZE (1 << 30)
 
-#define Threshold 28
+#define Threshold ((1 << 7))
 #define SEGMENT_DATA_NUMBER (SEGMENT_CAPACITY * BUCKET_CAPACITY + STORE)
 #define BUCKET_DATA_NUMBER (SEGMENT_CAPACITY * BUCKET_CAPACITY)
 #define CACHELINESIZE 64
@@ -64,10 +65,15 @@ static const uint64_t kFNVPrime64 = 1099511628211;
 #define MASK ((0xFFFFFFFF << PERSIST_DEPTH) & 0xFFFFFFFF)
 #define ALLOC_SIZE ((size_t)4<<33)
 #define CONSUME_THREAD 1
+#define VALUE_SIZE 16
+#define preNum 200000000
+
+std::vector<char> default_buffer(VALUE_SIZE, 'X');
+const char* DEFAULT = default_buffer.data();
 extern bool consumeFlag;
 
 //#define loadNum 000000000
-//#define testNum 200000000
+
 //#define THREAD_MSB 5
 //#define THREAD_NUMBER (1 << THREAD_MSB)
 //#define LOAD_DATA_PATH "/md0/ycsb200M/ycsb_load_workloada"
@@ -209,6 +215,20 @@ public:
 
 class Util{
 public:
+
+    static void ntw_memcpy(void* dst, const void* src, size_t size) {
+        __m128i* s = (__m128i*)src;
+        __m128i* d = (__m128i*)dst;
+
+        size_t i;
+        for (i = 0; i < size / 16; ++i) {
+            __m128i val = _mm_loadu_si128(&s[i]);
+            _mm_stream_si128(&d[i], val);  // Non-temporal store
+        }
+
+        _mm_sfence();  // Ensure write ordering & persistency
+    }
+
     static void *staticAllocatePMSpace(const string& filePath,uint64_t size){
         int nvm_fd = open(filePath.c_str(), O_CREAT | O_RDWR, 0644);
         if (nvm_fd < 0) {
@@ -230,6 +250,12 @@ public:
 //        memset(mapped, 0, size);
         close(nvm_fd);
         return mapped;
+    }
+    static void prefetch(const void *ptr) {
+        typedef struct {
+            char x[KEY_LENGTH * 2 * ((1 << 7))];
+        } cacheline_t;
+        asm volatile("prefetcht0 %0" : : "m"(*(const cacheline_t *)ptr));
     }
     static void *staticRecoveryPMSpace(const string& filePath,uint64_t size){
         int fd = open(filePath.c_str(), O_RDWR);

@@ -14,7 +14,7 @@
 -- Found OpenMP_C: -fopenmp (found version "4.5")
 -- Found OpenMP_CXX: -fopenmp (found version "4.5")
 -- Found OpenMP: TRUE (found version "4.5")
-CMake Error at CMakeLists.txt:13 (find_package):
+CMake Error at CMakeLists.txt:21 (find_package):
   By not providing "Findgflags.cmake" in CMAKE_MODULE_PATH this project has
   asked CMake to find a package configuration file provided by "gflags", but
   CMake did not find one.

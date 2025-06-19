@@ -1,11 +1,12 @@
 #include "PIONEER.h"
+//#include "PIONEER_var.h"
 #include <cstdlib>
 #include <unistd.h>
 #include <boost/thread.hpp>
 #include "DataGeneration.h"
 #include <filesystem>
 #include <numeric>
-#include <papi.h>
+//#include <papi.h>
 #include <gflags/gflags.h>
 #include <immintrin.h>
 #include <stdint.h>
@@ -19,21 +20,41 @@ DEFINE_string(load_data_path, "/d/dataset/YCSB/ycsb200M/ycsb_load_workloada", "l
 DEFINE_string(run_data_path, "/d/dataset/YCSB/ycsb200M/ycsb_run_workloada", "run dataset path");
 DEFINE_string(pm_path, "/d/dataset/YCSB/ycsb200M/ycsb_run_workloada", "Persist memory path");
 DEFINE_uint32(thread_number, 32, "the thread number running in the concurrent environment");
-DEFINE_string(operations, "insert", "op: insert/search/update/delete/YCSB");
+DEFINE_string(operations, "search", "op: insert/search/update/delete/YCSB");
 
-//char output[FLAGS_run_number/FLAGS_run_number][MAX_LENGTH + 1];
+char (*output)[MAX_LENGTH + 1];
 uint8_t  *ops;
 uint64_t *keys;
 uint64_t *value_lens;
 KeyPointer* keyPointer;
 ValuePointer* valuePointer;
-
 bool  * statu_log;
 
-void keyProcessForHier(uint64_t * dataSet, int pid) {
-#ifdef SIMD
+
+struct Log {
+    uint8_t op;
+    char key[KEY_LENGTH];
+    char value[VALUE_SIZE];
+};
+
+void HierLogging(int pid,double * insertTime) {
     uint64_t start = (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * pid;
     uint64_t end   = (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * (pid + 1);
+    nsTimer ts;
+    ts.start();
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        auto valueStore = static_cast<char*>(Util::staticAllocatePMSpace("/pmem" + std::to_string(pid % 2) + "/blockHashLog_" + std::to_string(i), (FLAGS_run_number + FLAGS_load_number) * VALUE_SIZE / FLAGS_thread_number));
+        for(int j = 0;j < (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number;j++) {
+            memcpy(valueStore + VALUE_SIZE * i,DEFAULT,VALUE_SIZE);
+        }
+    }
+    ts.end();
+    insertTime[pid] += (double)ts.duration() / 1000000 / 1000;
+}
+void keyProcessForHier(uint64_t * dataSet, int pid) {
+    uint64_t start = (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * pid;
+    uint64_t end   = (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * (pid + 1);
+#ifdef SIMD
     const int SIMD_WIDTH = 8;
     __m512i midTmp = _mm512_set1_epi64(0x00ff);
     __m512i vKFNVPrime64 = _mm512_set1_epi64(1099511628211ULL);
@@ -60,7 +81,7 @@ void keyProcessForHier(uint64_t * dataSet, int pid) {
         _mm512_storeu_si512(reinterpret_cast<__m512i*>(&valuePointer[i].value), hash);
     }
 #else
-    for(uint64_t i = (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * pid; i < (FLAGS_load_number + FLAGS_run_number) / FLAGS_thread_number * (pid + 1); i++){
+    for(uint64_t i = start; i < end; i++){
         keyPointer[i].key = dataSet[i];
         uint64_t val = dataSet[i];
         uint8_t hash = 123;
@@ -87,7 +108,14 @@ void keyProcessForHierMulti(uint64_t * dataSet){
     }
     insertThreads.join_all();
 }
-
+void persistentLog(double * insertTime) {
+    boost::thread_group insertThreads;
+    boost::barrier insertBarrier(FLAGS_thread_number);
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        insertThreads.create_thread(boost::bind(&HierLogging,i,insertTime));
+    }
+    insertThreads.join_all();
+}
 void process(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier, int *insertNumber,double * insertTime, bool type){
 #ifdef Binding_threads
     cpu_set_t mask;
@@ -110,11 +138,36 @@ void process(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier, int
     }
     ts.end();
     insertNumber[pid] = (int)counter;
-    insertTime[pid] = (double)ts.duration() / 1000000 / 1000;
+    insertTime[pid] += (double)ts.duration() / 1000000 / 1000;
 }
 
 
 void processYCSB(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier, int *insertNumber,double * insertTime, bool type){
+#ifdef TESTCACHE
+    PAPI_register_thread();
+    int retval;
+    if (PAPI_library_init(PAPI_VER_CURRENT) != PAPI_VER_CURRENT)
+        exit(1);
+/* Create an EventSet */
+    int EventSet = PAPI_NULL;
+    retval = PAPI_create_eventset (&EventSet);
+    assert(retval==PAPI_OK);
+/* Add an event*/
+    retval = PAPI_add_event(EventSet, PAPI_L3_TCM);
+    assert(retval==PAPI_OK);
+    retval = PAPI_add_event(EventSet, PAPI_L2_TCM);
+    assert(retval==PAPI_OK);
+    retval = PAPI_add_event(EventSet, PAPI_L1_TCM);
+    assert(retval==PAPI_OK);
+    if (PAPI_start(EventSet) != PAPI_OK)
+        retval = PAPI_start (EventSet);
+    assert(retval==PAPI_OK);
+    long long values1[3];
+    long long values2[3];
+    PAPI_read(EventSet, values1);
+    assert(retval==PAPI_OK);
+#endif
+
 #ifdef Binding_threads
     cpu_set_t mask;
     CPU_ZERO(&mask);
@@ -125,18 +178,35 @@ void processYCSB(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier,
 #endif
 
     barrier.wait();
-    nsTimer ts;
-    ts.start();
-    int i = pid;
+    int i = FLAGS_run_number / FLAGS_thread_number * pid;
     int counter = 0;
-    for(;i < FLAGS_run_number;i += FLAGS_thread_number){
+    double *runTime = new double [FLAGS_run_number / FLAGS_thread_number];
+    for(;i < FLAGS_run_number / FLAGS_thread_number * (pid + 1);i ++){
+        nsTimer ts;
+        ts.start();
         if(dramManager->processRequest(keyPointer[i],valuePointer[i],type)){
             counter++;
         }
+        ts.end();
+        runTime[i - FLAGS_run_number / FLAGS_thread_number * pid] = (double)ts.duration() / 1000000 / 1000;
     }
-    ts.end();
+#ifdef TESTCACHE
+    retval = PAPI_stop (EventSet,values2);
+    assert(retval==PAPI_OK);
+
+    std::cout << "L3 Cache Misses: " << values2[0] - values1[0] << std::endl;
+    std::cout << "L2 Cache Misses: " << values2[1] - values1[1] << std::endl;
+    std::cout << "L1 Cache Misses: " << values2[2] - values1[2] << std::endl;
+    PAPI_cleanup_eventset(EventSet);
+    PAPI_destroy_eventset(&EventSet);
+    PAPI_unregister_thread();
+#endif
+
     insertNumber[pid] = (int)counter;
-    insertTime[pid] = (double)ts.duration() / 1000000 / 1000;
+    for(int j = 0; j < FLAGS_run_number / FLAGS_thread_number; j++){
+        insertTime[pid] += runTime[j];
+    }
+    // insertTime[pid] = insertTime[pid] / 1000000 / 1000;
 }
 
 void remainProcess(DRAMManagerNUMA* dramManager,int pid,double * insertTime){
@@ -218,10 +288,15 @@ void readDataSet(int pid){
     offset = FLAGS_run_number/INIT_THREAD_NUMBER * pid;
     readYCSB(keys + offset + FLAGS_load_number, value_lens + offset + FLAGS_load_number, ops + offset, offset, FLAGS_run_data_path, FLAGS_run_number);
 }
+#ifndef VARIABLE
 void initStructure(DRAMManagerNUMA* dramManager,int pid,uint64_t * dataSet, bool * status){
     dramManager->init(dataSet, keyPointer, valuePointer, status);
 }
-
+#else
+void initStructure(DRAMManagerNUMA* dramManager,int pid,char dataSet[][MAX_LENGTH + 1], bool * status){
+    dramManager->initVariableKey(dataSet, keyPointer, valuePointer);
+}
+#endif
 void YCSB(DRAMManagerNUMA* dramManagerNUMA){
     boost::thread_group threadGroup;
     boost::barrier barrierGroup(FLAGS_thread_number);
@@ -260,7 +335,7 @@ void YCSB(DRAMManagerNUMA* dramManagerNUMA){
     std::cout << "YCSB time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
     std::cout << "YCSB total Number: " << total << " YCSB throughput: " << total / totalTime / 1000 /1000<< std::endl;
 }
-
+#ifndef VARIABLE
 void insert(DRAMManagerNUMA* dramManagerNUMA){
     boost::thread_group threadGroup;
     boost::barrier barrierGroup(FLAGS_thread_number);
@@ -272,7 +347,164 @@ void insert(DRAMManagerNUMA* dramManagerNUMA){
 
     auto* processNumber = new int[32];
     auto* processTimer = new double [32];
+    persistentLog(processTimer);
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(barrierGroup),processNumber,processTimer,true));
+    }
+    std::cout << "Insert Begin" << std::endl;
+    runtime.start();
+    threadGroup.join_all();
+    runtime.end();
 
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&remainProcess, dramManagerNUMA, i, processTimer));
+    }
+    std::cout << "remain Procession" << std::endl;
+    remainProcessTime.start();
+    threadGroup.join_all();
+    remainProcessTime.end();
+
+    double total = FLAGS_run_number;
+    double totalTime = 0;
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalTime += processTimer[i];
+    }
+    totalTime /= FLAGS_thread_number;
+
+    std::cout << "Insert time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
+    std::cout << "Insert total Number: " << total << " Insert throughput: " << total / totalTime / 1000 /1000<< std::endl;
+}
+
+void search(DRAMManagerNUMA* dramManagerNUMA){
+    boost::thread_group threadGroup;
+    boost::barrier barrierGroup(FLAGS_thread_number);
+    nsTimer initTime,runtime,remainProcessTime;
+
+    initTime.start();
+    keyProcessForHierMulti(keys);
+    initTime.end();
+
+    auto* processNumber = new int [32];
+    auto* processTimer = new double [32];
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(barrierGroup),processNumber,processTimer,false));
+    }
+    std::cout << "Search Begin" << std::endl;
+    runtime.start();
+    threadGroup.join_all();
+    runtime.end();
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&remainProcess, dramManagerNUMA, i, processTimer));
+    }
+    std::cout << "remain Procession" << std::endl;
+    remainProcessTime.start();
+    threadGroup.join_all();
+    remainProcessTime.end();
+
+    double total = FLAGS_run_number;
+    double totalTime = 0;
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalTime += processTimer[i];
+    }
+    totalTime /= FLAGS_thread_number;
+
+    std::cout << "search time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
+    std::cout << "search total Number: " << total << " search throughput: " << total / totalTime / 1000 /1000<< std::endl;
+}
+
+void update(DRAMManagerNUMA* dramManagerNUMA){
+    boost::thread_group threadGroup;
+    boost::barrier barrierGroup(FLAGS_thread_number);
+    nsTimer initTime,runtime,remainProcessTime;
+
+    initTime.start();
+    keyProcessForHierMulti(keys);
+    initTime.end();
+
+    auto* processNumber = new int[32];
+    auto* processTimer = new double [32];
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(barrierGroup),processNumber,processTimer,true));
+    }
+    std::cout << "Update Begin" << std::endl;
+    runtime.start();
+    threadGroup.join_all();
+    runtime.end();
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&remainProcess, dramManagerNUMA, i, processTimer));
+    }
+    std::cout << "remain Procession" << std::endl;
+    remainProcessTime.start();
+    threadGroup.join_all();
+    remainProcessTime.end();
+
+    double total = FLAGS_run_number;
+    double totalTime = 0;
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalTime += processTimer[i];
+    }
+    totalTime /= FLAGS_thread_number;
+
+    std::cout << "Update time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
+    std::cout << "Update total Number: " << total << " Update throughput: " << total / totalTime / 1000 /1000<< std::endl;
+}
+
+void remove(DRAMManagerNUMA* dramManagerNUMA){
+    boost::thread_group threadGroup;
+    boost::barrier barrierGroup(FLAGS_thread_number);
+    nsTimer initTime,runtime,remainProcessTime;
+
+    initTime.start();
+    keyProcessForHierMulti(keys);
+    initTime.end();
+
+    auto* processNumber = new int[32];
+    auto* processTimer = new double [32];
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&process, dramManagerNUMA, i, boost::ref(barrierGroup),processNumber,processTimer,false));
+    }
+    std::cout << "delete begin" << std::endl;
+    runtime.start();
+    threadGroup.join_all();
+    runtime.end();
+
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        threadGroup.create_thread(boost::bind(&removeRemainProcess, dramManagerNUMA, i, processTimer));
+    }
+    std::cout << "remain Procession" << std::endl;
+    remainProcessTime.start();
+    threadGroup.join_all();
+    remainProcessTime.end();
+
+    double total = FLAGS_run_number;
+    double totalTime = 0;
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalTime += processTimer[i];
+    }
+    totalTime /= FLAGS_thread_number;
+
+    std::cout << "delete time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
+    std::cout << "delete total Number: " << total << " delete throughput: " << total / totalTime / 1000 /1000<< std::endl;
+}
+#else
+void insert(DRAMManagerNUMA* dramManagerNUMA){
+    boost::thread_group threadGroup;
+    boost::barrier barrierGroup(FLAGS_thread_number);
+    nsTimer initTime,runtime,remainProcessTime;
+
+    initTime.start();
+    keyProcessForHierMulti(keys);
+    initTime.end();
+
+    std::cout << "Log time: " << (double)initTime.duration() / 1000000 / 1000 << std::endl;
+    auto* processNumber = new int[32];
+    auto* processTimer = new double [32];
+    persistentLog(processTimer);
     for (int i = 0; i < FLAGS_thread_number; ++i) {
         threadGroup.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(barrierGroup),processNumber,processTimer,true));
     }
@@ -416,50 +648,7 @@ void remove(DRAMManagerNUMA* dramManagerNUMA){
     std::cout << "delete time: " << (double)runtime.duration() / 1000000 / 1000 << std::endl;
     std::cout << "delete total Number: " << total << " delete throughput: " << total / totalTime / 1000 /1000<< std::endl;
 }
-
-void Portion() {
-    keyProcessForHierMulti(keys);
-    nsTimer insertTime,searchTime;
-
-    auto * nvmTest = new NVMPortion();
-    nvmTest->init("/pmem0/blockHash");
-    int n = 10000;
-    double array[FLAGS_run_number/n];
-    std::ofstream file("output.csv");
-    if (!file.is_open()) {
-        std::cerr << "can not open file" << std::endl;
-        exit(2);
-    }
-
-    int counter = 0;
-    std::cout << "begin operation" << std::endl;
-    insertTime.start();
-    int file_counter = 0;
-    for(int i = 0;i < FLAGS_run_number;i++){
-//        if(i % n == 0 && i != 0){
-//            std::cout << "DataSetNumber:" << i << " loadFactor:" << 1.000000 *  i / (nvmTest->nvmBlockManager->start * SEGMENT_DATA_NUMBER) << std::endl;
-//            array[file_counter++] = 1.000000 *  i / (nvmTest->nvmBlockManager->start * SEGMENT_DATA_NUMBER);
-//        }
-        nvmTest->insert(keyPointer[i],valuePointer[i],keys);
-    }
-    insertTime.end();
-//    std::cout << "DataSetNumber:" << FLAGS_run_number + FLAGS_load_number << " loadFactor:" <<1.000000 *  (FLAGS_run_number + FLAGS_load_number) / nvmTest->nvmBlockManager->start / SEGMENT_DATA_NUMBER << std::endl;
-    searchTime.start();
-    for(int i = 0;i < FLAGS_run_number;i++){
-        if(nvmTest->search(keyPointer[i],valuePointer[i],keys)){
-            counter++;
-        }
-    }
-    searchTime.end();
-    for (int i = 0; i < FLAGS_run_number / n; ++i) {
-        file << array[i] << "\n";
-    }
-    cout << "Insert time:"<< (double)insertTime.duration() / 1000000 / 1000 << endl;
-    cout << "Insert throughput:"<< FLAGS_run_number / (double)insertTime.duration() * 1000  << endl;
-    cout << "Search time:"<< (double)searchTime.duration() / 1000000 / 1000 << endl;
-    cout << "Search throughput:"<< FLAGS_run_number / (double)searchTime.duration() * 1000 << endl;
-    cout << "search number:"<< counter << endl;
-}
+#endif
 
 void removeProcess(DRAMManagerNUMA* dramManager, int pid, boost::barrier& barrier, int *removeNumber,double * removeTime){
 #ifdef Binding_threads
@@ -758,66 +947,57 @@ void generateStrings(const uint64_t* key, size_t keySize, size_t length, char ou
         output[i][length] = '\0';
     }
 }
+void testVariableKey(DRAMManagerNUMA * dramManagerNUMA){
+    boost::thread_group insertThreads;
+    boost::barrier insertBarrier(FLAGS_thread_number);
+    nsTimer initTime,insertTime,searchTime,updateTime,searchAllTime,deleteTime;
 
-void cacheMonitor(){
+    generateStrings(keys, FLAGS_run_number, MAX_LENGTH, output);
+    dramManagerNUMA->initVariableKey(output,keyPointer,valuePointer);
+
+    initTime.start();
     keyProcessForHierMulti(keys);
-    auto * nvmblock = new NVMBlockManager();
-    nsTimer insertTime,searchTime;
-    int n = 10000;
-    double array[FLAGS_run_number/n];
-    std::ofstream file("output.csv");
-    if (!file.is_open()) {
-        std::cerr << "can not open file" << std::endl;
-        exit(2);
+    initTime.end();
+    auto* insertTimer = new double [32];
+    auto* searchTimer = new double [32];
+    auto* insertNumber = new int [32];
+    insertThreads.join_all();
+    // insert
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        insertThreads.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(insertBarrier),insertNumber,insertTimer,1));
     }
+    std::cout << "Insert Begin" << std::endl;
+    insertTime.start();
+    insertThreads.join_all();
+    insertTime.end();
+    // search
     int counter = 0;
-    std::cout << "begin operation" << std::endl;
-    cout << "Insert time:"<< (double)insertTime.duration() / 1000000 / 1000 << endl;
-    cout << "Insert throughput:"<< FLAGS_run_number / (double)insertTime.duration() * 1000  << endl;
-    cout << "search number:"<< counter << endl;
-    zipfian_key_generator_t* generator_;
-    generator_ = new zipfian_key_generator_t(1, 1 << (GENERATE_MSB + SEGMENT_PREFIX),SKEWNESS);
-    int retval;
-    if (PAPI_library_init(PAPI_VER_CURRENT) != PAPI_VER_CURRENT)
-        exit(1);
-/* Create an EventSet */
-    int EventSet = PAPI_NULL;
-    retval = PAPI_create_eventset (&EventSet);
-    assert(retval==PAPI_OK);
-/* Add an event*/
-    retval = PAPI_add_event(EventSet, PAPI_L3_TCM);
-    assert(retval==PAPI_OK);
-    retval = PAPI_add_event(EventSet, PAPI_L2_TCM);
-    assert(retval==PAPI_OK);
-    retval = PAPI_add_event(EventSet, PAPI_L1_TCM);
-    assert(retval==PAPI_OK);
-    if (PAPI_start(EventSet) != PAPI_OK)
-        retval = PAPI_start (EventSet);
-    assert(retval==PAPI_OK);
-    long long values1[3];
+    boost::thread_group searchThreads;
+    boost::barrier searchBarrier(FLAGS_thread_number);
+    for (int i = 0; i < FLAGS_thread_number; ++i) {
+        searchThreads.create_thread(boost::bind(&processYCSB, dramManagerNUMA, i, boost::ref(searchBarrier), insertNumber, searchTimer,0));
+    }
+    searchTime.start();
+    searchThreads.join_all();
+    searchTime.end();
 
-    long long values2[3];
+    double total = FLAGS_run_number;
+    double totalInsertTime = 0;
+    double totalSearchTime = 0;
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalInsertTime += insertTimer[i];
+    }
+    totalInsertTime /= FLAGS_thread_number;
 
-    PAPI_read(EventSet, values1);
-    assert(retval==PAPI_OK);
+    for(int i = 0;i < FLAGS_thread_number;i++){
+        totalSearchTime += searchTimer[i];
+    }
 
-/* Stop counting events */
-    // Code block to be profiled
-    nsTimer ts;
-    ts.start();
-    uint64_t tmp;
-//    testDirectory();
-    ts.end();
-    printf("Test time %f\n",(double)ts.duration() / 1000000 / 1000);
-    retval = PAPI_stop (EventSet,values2);
+    totalSearchTime /= FLAGS_thread_number;
 
-    assert(retval==PAPI_OK);
-
-    std::cout << "L3 Cache Misses: " << values2[0] - values1[0] << std::endl;
-    std::cout << "L2 Cache Misses: " << values2[1] - values1[1] << std::endl;
-    std::cout << "L1 Cache Misses: " << values2[2] - values1[2] << std::endl;
+    std::cout << "Insert time: " << (double)insertTime.duration() / 1000000 / 1000 << " Insert throughput: " << total / totalInsertTime / 1000 /1000<< std::endl;
+    std::cout << "Search time: " << (double)searchTime.duration() / 1000000 / 1000 << " Search throughput: " << total / totalSearchTime / 1000 /1000<< std::endl;
 }
-
 void start(DRAMManagerNUMA * dramManager) {
     if(strcmp(FLAGS_operations.c_str(), "YCSB") == 0) {
         YCSB(dramManager);
@@ -850,9 +1030,6 @@ int main(int argc, char* argv[]) {
     std::cout << "thread_number = " << FLAGS_thread_number << std::endl;
     std::cout << "operations = " << FLAGS_operations << std::endl;
 
-    boost::thread_group insertThreads;
-    boost::barrier insertBarrier(FLAGS_thread_number);
-
     keyPointer = new KeyPointer[FLAGS_run_number + FLAGS_load_number];
     valuePointer = new ValuePointer[FLAGS_run_number + FLAGS_load_number];
     keys = new uint64_t [FLAGS_run_number + FLAGS_load_number];
@@ -860,6 +1037,8 @@ int main(int argc, char* argv[]) {
     ops = new uint8_t [FLAGS_run_number];
     statu_log = new bool[FLAGS_run_number];
 
+    boost::thread_group insertThreads;
+    boost::barrier insertBarrier(FLAGS_thread_number);
 #ifndef RECOVER
     try {
         for (const auto& entry : std::filesystem::directory_iterator("/pmem1")) {
@@ -886,8 +1065,19 @@ int main(int argc, char* argv[]) {
 
     insertThreads.join_all();
     printf("End readData\n");
-
-    initStructure(dramManagerNUMA,0,keys,statu_log);
+#ifndef VARIABLE
+    initStructure(dramManagerNUMA, 0, keys, statu_log);
+#ifdef WithoutStash
+    for(int i = 0;i < NVM_DIRECTORY_DEPTH ; i++){
+        dramManagerNUMA->managerNUMAOne->nvmManager->staticDirectory[i].persistStrategy = 1;
+        dramManagerNUMA->managerNUMAZero->nvmManager->staticDirectory[i].persistStrategy = 1;
+    }
+#endif
+#else
+    output = new char[FLAGS_run_number][MAX_LENGTH + 1];
+    generateStrings(keys, FLAGS_run_number, MAX_LENGTH, output);
+    initStructure(dramManagerNUMA, 0, output, statu_log);
+#endif
     start(dramManagerNUMA);
     return 0;
 }

@@ -1,1 +1,0 @@
-/usr/bin/c++  -mavx2 CMakeFiles/PIONEER.dir/PIONEER.cpp.o -o PIONEER  -Wl,-rpath,/usr/local/anaconda3/lib /usr/local/anaconda3/lib/libgflags.so.2.2.2 -lpmemobj -lpmemobj -lpmem fastalloc/libnvmkv-fastalloc.a rng/libnvmkv-rng.a -lpthread -luuid /usr/local/anaconda3/lib/libboost_thread.so.1.73.0 -lpapi -lpthread /usr/lib/gcc/x86_64-linux-gnu/11/libgomp.so -lpthread 
